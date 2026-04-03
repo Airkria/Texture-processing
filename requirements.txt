@@ -1,0 +1,7 @@
+# TextureAlphaMerger 依赖
+
+# 图像处理
+Pillow>=10.0.0
+
+# GUI框架
+PySide6>=6.6.0
