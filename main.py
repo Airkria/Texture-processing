@@ -7,9 +7,12 @@ TextureAlphaMerger - 批量将透明图片合并到图片的Alpha通道
 
 import sys
 from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtCore import QTimer
 
 from ui.main_window import TextureAlphaMergerApp, LIGHT_STYLE
 from core.processor import ImageProcessor
+from core.version import VERSION_STR
+from core.updater import check_for_update
 
 
 def main():
@@ -23,6 +26,9 @@ def main():
     # 创建主窗口
     window = TextureAlphaMergerApp()
     processor = ImageProcessor()
+
+    # 设置窗口标题包含版本号
+    window.setWindowTitle(f"TextureAlphaMerger {VERSION_STR}")
 
     def on_export(color_files, alpha_files, output_path, output_format, output_size):
         """导出回调"""
@@ -50,8 +56,15 @@ def main():
 
         QMessageBox.information(window, "完成", msg)
 
+    def check_update():
+        """延迟检查更新（窗口显示后）"""
+        check_for_update(window, silent=True)
+
     window.export_requested.connect(on_export)
     window.show()
+
+    # 延迟1秒后检查更新（不阻塞启动）
+    QTimer.singleShot(1000, check_update)
 
     sys.exit(app.exec())
 
