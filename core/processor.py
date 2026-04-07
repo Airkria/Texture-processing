@@ -4,6 +4,121 @@
 import os
 from PIL import Image
 
+# 颜色图后缀（会被替换为 _DA）
+COLOR_SUFFIXES = ['_D', '_Color', '_Albedo', '_BaseColor', '_Diffuse', '_Base', '_Col']
+# 尺寸相关后缀（用于识别和替换）
+SIZE_SUFFIXES = ['_4K', '_2K', '_1K', '_512', '_256', '_128', '_4096', '_2048', '_1024', '_0512', '_0256', '_0128']
+# PBR类型后缀（尺寸后缀放在这些之前）
+TYPE_SUFFIXES = [
+    '_Normal', '_Norm', '_N',
+    '_Roughness', '_Rough', '_R',
+    '_Metallic', '_Metal', '_M',
+    '_AO', '_AmbientOcclusion',
+    '_Height', '_Displacement', '_Disp',
+    '_Opacity', '_Alpha', '_A',
+    '_Translucency', '_Tra',
+    '_Emissive', '_Emission', '_E',
+    '_Specular', '_Spec',
+    '_Glossiness', '_Gloss',
+    '_Curvature', '_Curv',
+    '_ID', 
+    '_Mask','_MRO','_ORM',
+]
+
+
+def parse_texture_name(name: str) -> dict:
+    """
+    解析纹理名称，提取基础名、尺寸后缀、类型后缀
+
+    Args:
+        name: 文件名（不含扩展名）
+
+    Returns:
+        dict: {
+            'base': 基础名称,
+            'size_suffix': 尺寸后缀或None,
+            'type_suffix': 类型后缀或None,
+            'is_color': 是否为颜色图
+        }
+    """
+    base = name
+    size_suffix = None
+    type_suffix = None
+    is_color = False
+
+    # 检测类型后缀
+    for ts in TYPE_SUFFIXES:
+        if base.endswith(ts):
+            type_suffix = ts
+            base = base[:-len(ts)]
+            break
+
+    # 检测颜色后缀（特殊类型，会被替换为 _DA）
+    for cs in COLOR_SUFFIXES:
+        if base.endswith(cs):
+            is_color = True
+            type_suffix = cs  # 当作类型后缀处理
+            base = base[:-len(cs)]
+            break
+
+    # 检测尺寸后缀
+    for ss in SIZE_SUFFIXES:
+        if base.endswith(ss):
+            size_suffix = ss
+            base = base[:-len(ss)]
+            break
+
+    return {
+        'base': base,
+        'size_suffix': size_suffix,
+        'type_suffix': type_suffix,
+        'is_color': is_color
+    }
+
+
+def get_output_name(color_name_no_ext: str, output_size: int = None) -> str:
+    """
+    根据彩色图名称生成输出文件名（有Alpha合成）
+
+    规则：
+    1. 解析基础名、尺寸、类型
+    2. 颜色后缀替换为 _DA
+    3. 格式：基础名_尺寸_DA
+
+    Examples:
+        T_Grass_D -> T_Grass_DA
+        T_Grass_2K_D + 1024 -> T_Grass_1024_DA
+        Long_Purple_Flag_2K_BaseColor + 1024 -> Long_Purple_Flag_1024_DA
+    """
+    parsed = parse_texture_name(color_name_no_ext)
+    base = parsed['base']
+
+    if output_size:
+        return f"{base}_{output_size}_DA"
+    else:
+        return f"{base}_DA"
+
+
+def get_resize_output_name(color_name_no_ext: str, output_size: int) -> str:
+    """
+    仅缩放时的输出文件名（无Alpha合成）
+
+    规则：
+    1. 解析基础名、尺寸、类型
+    2. 替换/添加尺寸后缀
+    3. 格式：基础名_尺寸_类型（类型保留原样）
+
+    Examples:
+        T_Grass_2K_D + 512 -> T_Grass_512_D
+        Long_Purple_Flag_2K_Normal + 1024 -> Long_Purple_Flag_1024_Normal
+        T_Grass_Normal + 512 -> T_Grass_512_Normal
+    """
+    parsed = parse_texture_name(color_name_no_ext)
+    base = parsed['base']
+    type_suffix = parsed['type_suffix'] or ''
+
+    return f"{base}_{output_size}{type_suffix}"
+
 
 class ImageProcessor:
     """图片处理器"""
@@ -174,7 +289,7 @@ class ImageProcessor:
             if alpha_file is not None:
                 # 情况1：有对应的Alpha图，合并到Alpha通道
                 ext = self._get_extension(output_format)
-                output_filename = name_no_ext + '_DA' + ext
+                output_filename = get_output_name(name_no_ext, output_size) + ext
                 output_path = os.path.join(target_dir, output_filename)
 
                 self.merge_alpha(color_file, alpha_file, output_path, output_format, output_size)
@@ -186,9 +301,9 @@ class ImageProcessor:
                         original_size = img.size[0]  # 获取宽度（假设正方形或取宽度）
 
                     if original_size != output_size:
-                        # 原尺寸与目标尺寸不同，进行缩放
+                        # 原尺寸与目标尺寸不同，进行缩放（不加_DA）
                         ext = self._get_extension(output_format)
-                        output_filename = f"{name_no_ext}_{output_size}{ext}"
+                        output_filename = get_resize_output_name(name_no_ext, output_size) + ext
                         output_path = os.path.join(target_dir, output_filename)
 
                         self.resize_image(color_file, output_path, output_format, output_size)

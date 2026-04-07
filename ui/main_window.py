@@ -14,6 +14,80 @@ from PySide6.QtGui import QDragEnterEvent, QDropEvent, QColor, QFont, QPainter, 
 SUPPORTED_FORMATS = {'.png', '.tga', '.bmp', '.jpg', '.jpeg'}
 
 # ============================================================================
+# 【Alpha匹配规则】
+# ============================================================================
+# 颜色图常见后缀（会被替换为Alpha后缀进行匹配）
+COLOR_SUFFIXES = ['_D', '_Color', '_Albedo', '_BaseColor', '_Diffuse', '_Base', '_Col']
+# Alpha图常见后缀
+ALPHA_SUFFIXES = ['_A', '_Opacity']
+
+
+def find_alpha_for_color(color_name_no_ext, dir_path):
+    """
+    智能匹配彩色图对应的Alpha图路径
+
+    匹配策略：
+    1. 追加方式：color_name + '_A' / '_Opacity'
+    2. 后缀替换：color_name 中的颜色后缀替换为 Alpha 后缀
+       例如：T_Grass_2K_D -> T_Grass_2K_A
+
+    Args:
+        color_name_no_ext: 彩色图文件名（不含扩展名）
+        dir_path: 文件所在目录
+
+    Returns:
+        匹配到的Alpha图完整路径，未找到返回None
+    """
+    for ext in SUPPORTED_FORMATS:
+        # 策略1：追加方式
+        for alpha_suffix in ALPHA_SUFFIXES:
+            alpha_path = os.path.join(dir_path, color_name_no_ext + alpha_suffix + ext)
+            if os.path.exists(alpha_path):
+                return alpha_path
+
+        # 策略2：后缀替换方式
+        for color_suffix in COLOR_SUFFIXES:
+            if color_name_no_ext.endswith(color_suffix):
+                base_name = color_name_no_ext[:-len(color_suffix)]
+                for alpha_suffix in ALPHA_SUFFIXES:
+                    alpha_path = os.path.join(dir_path, base_name + alpha_suffix + ext)
+                    if os.path.exists(alpha_path):
+                        return alpha_path
+
+    return None
+
+
+def is_alpha_match_color(alpha_name_no_ext, color_name_no_ext):
+    """
+    判断Alpha图是否与彩色图匹配（用于删除时联动）
+
+    匹配规则（与find_alpha_for_color一致）：
+    1. 追加方式：color_name + '_A' / '_Opacity' == alpha_name
+    2. 后缀替换：color_name 的颜色后缀替换为 Alpha 后缀后 == alpha_name
+
+    Args:
+        alpha_name_no_ext: Alpha图文件名（不含扩展名）
+        color_name_no_ext: 彩色图文件名（不含扩展名）
+
+    Returns:
+        True如果匹配，否则False
+    """
+    # 策略1：追加方式
+    for alpha_suffix in ALPHA_SUFFIXES:
+        if alpha_name_no_ext == color_name_no_ext + alpha_suffix:
+            return True
+
+    # 策略2：后缀替换方式
+    for color_suffix in COLOR_SUFFIXES:
+        if color_name_no_ext.endswith(color_suffix):
+            base_name = color_name_no_ext[:-len(color_suffix)]
+            for alpha_suffix in ALPHA_SUFFIXES:
+                if alpha_name_no_ext == base_name + alpha_suffix:
+                    return True
+
+    return False
+
+# ============================================================================
 # 【样式参数 - 可在此处微调数值】
 # ============================================================================
 
@@ -512,7 +586,8 @@ class AlphaDisplayFrame(QFrame):
             name_no_ext = os.path.splitext(os.path.basename(color_file))[0]
             for alpha_file in self.files:
                 alpha_name = os.path.splitext(os.path.basename(alpha_file))[0]
-                if alpha_name == name_no_ext + '_A' or alpha_name == name_no_ext + '_Opacity':
+                # 使用智能匹配函数判断关联
+                if is_alpha_match_color(alpha_name, name_no_ext):
                     alpha_to_remove.append(alpha_file)
 
         for f in alpha_to_remove:
@@ -589,7 +664,7 @@ class TextureAlphaMergerApp(QMainWindow):
         desc1.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(desc1)
 
-        desc2 = QLabel("Alpha图会识别图片命名后缀自动匹配：xx_A / xx_Opacity")
+        desc2 = QLabel("自动匹配：xx_A/xx_Opacity 或 xx_D->xx_A 后缀替换")
         desc2.setObjectName("descLabel")
         desc2.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(desc2)
@@ -684,19 +759,12 @@ class TextureAlphaMergerApp(QMainWindow):
             dir_path = os.path.dirname(color_file)
             name_no_ext = os.path.splitext(os.path.basename(color_file))[0]
 
-            found = False
-            for suffix in ['_A', '_Opacity']:
-                if found:
-                    break
-                for ext in ['.png', '.tga', '.bmp', '.jpg', '.jpeg']:
-                    alpha_path = os.path.join(dir_path, name_no_ext + suffix + ext)
-                    if os.path.exists(alpha_path):
-                        alpha_files_full.append(alpha_path)
-                        alpha_files_display.append(alpha_path)
-                        found = True
-                        break
-
-            if not found:
+            # 使用智能匹配函数
+            alpha_path = find_alpha_for_color(name_no_ext, dir_path)
+            if alpha_path:
+                alpha_files_full.append(alpha_path)
+                alpha_files_display.append(alpha_path)
+            else:
                 alpha_files_full.append(None)  # 【关键修复】用None占位，保持一一对应
 
         # 保存完整映射用于导出
