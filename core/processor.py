@@ -340,3 +340,151 @@ class ImageProcessor:
             'JPEG': '.jpg'
         }
         return format_map.get(output_format.upper(), '.png')
+
+    def merge_rgb_channels(self, r_image_path: str, g_image_path: str, b_image_path: str,
+                           output_path: str, output_format: str = 'PNG',
+                           output_size: int = None) -> bool:
+        """
+        将R、G、B三个通道贴图合成为一张RGB图片
+
+        Args:
+            r_image_path: R通道图片路径
+            g_image_path: G通道图片路径
+            b_image_path: B通道图片路径
+            output_path: 输出文件路径
+            output_format: 输出格式 (PNG, TGA, BMP, JPG)
+            output_size: 输出尺寸（可选，如1024表示1024x1024）
+
+        Returns:
+            bool: 是否成功
+        """
+        try:
+            # 打开各通道图片并转换为灰度
+            r_img = Image.open(r_image_path).convert('L') if r_image_path else None
+            g_img = Image.open(g_image_path).convert('L') if g_image_path else None
+            b_img = Image.open(b_image_path).convert('L') if b_image_path else None
+
+            # 确定输出尺寸（优先使用output_size，否则使用第一个有效图片的尺寸）
+            if output_size:
+                target_size = (output_size, output_size)
+            else:
+                # 找到第一个有效的图片获取尺寸
+                for img in [r_img, g_img, b_img]:
+                    if img is not None:
+                        target_size = img.size
+                        break
+                else:
+                    return False  # 没有任何有效图片
+
+            # 创建各通道图像（如果没有则使用黑色填充）
+            if r_img:
+                if r_img.size != target_size:
+                    r_img = r_img.resize(target_size, Image.LANCZOS)
+                r_channel = r_img
+            else:
+                r_channel = Image.new('L', target_size, 0)
+
+            if g_img:
+                if g_img.size != target_size:
+                    g_img = g_img.resize(target_size, Image.LANCZOS)
+                g_channel = g_img
+            else:
+                g_channel = Image.new('L', target_size, 0)
+
+            if b_img:
+                if b_img.size != target_size:
+                    b_img = b_img.resize(target_size, Image.LANCZOS)
+                b_channel = b_img
+            else:
+                b_channel = Image.new('L', target_size, 0)
+
+            # 合并RGB通道
+            rgb_img = Image.merge('RGB', (r_channel, g_channel, b_channel))
+
+            # 确保输出目录存在
+            output_dir = os.path.dirname(output_path)
+            if output_dir:
+                os.makedirs(output_dir, exist_ok=True)
+
+            # 根据格式保存
+            self._save_image(rgb_img, output_path, output_format)
+
+            self.processed_count += 1
+            return True
+
+        except Exception as e:
+            self.failed_files.append((output_path, str(e)))
+            return False
+
+    def merge_rgb_files(self, color_files: list, r_files: list, g_files: list, b_files: list,
+                        output_dir: str = None, output_format: str = 'PNG',
+                        output_size: int = None, output_suffix: str = '_RAH',
+                        progress_callback=None) -> dict:
+        """
+        批量合并RGB通道贴图
+
+        Args:
+            color_files: 彩色图文件路径列表（用作命名基础）
+            r_files: R通道图文件路径列表（与color_files一一对应，None表示无匹配）
+            g_files: G通道图文件路径列表（与color_files一一对应，None表示无匹配）
+            b_files: B通道图文件路径列表（与color_files一一对应，None表示无匹配）
+            output_dir: 输出目录（如果为空则使用各彩色图的源目录）
+            output_format: 输出格式
+            output_size: 输出尺寸（可选）
+            output_suffix: 输出后缀（如_RAH）
+            progress_callback: 进度回调函数 callback(current, total, filename)
+
+        Returns:
+            dict: 处理结果
+        """
+        self.processed_count = 0
+        self.resized_count = 0
+        self.failed_files = []
+        self.skipped_files = []
+
+        total = len(color_files)
+
+        for idx, (color_file, r_file, g_file, b_file) in enumerate(zip(color_files, r_files, g_files, b_files), 1):
+            filename = os.path.basename(color_file)
+            name_no_ext = os.path.splitext(filename)[0]
+
+            # 解析基础名称
+            parsed = parse_texture_name(name_no_ext)
+            base_name = parsed['base']
+
+            # 确定输出目录
+            if output_dir:
+                target_dir = output_dir
+            else:
+                target_dir = os.path.dirname(color_file)
+
+            # 检查是否至少有一个通道图
+            if r_file is None and g_file is None and b_file is None:
+                self.skipped_files.append(color_file)
+                if progress_callback:
+                    progress_callback(idx, total, filename)
+                continue
+
+            # 生成输出文件名
+            ext = self._get_extension(output_format)
+            if output_size:
+                output_filename = f"{base_name}_{output_size}{output_suffix}{ext}"
+            else:
+                output_filename = f"{base_name}{output_suffix}{ext}"
+            output_path = os.path.join(target_dir, output_filename)
+
+            # 合并RGB通道
+            self.merge_rgb_channels(r_file, g_file, b_file, output_path, output_format, output_size)
+
+            # 进度回调
+            if progress_callback:
+                progress_callback(idx, total, filename)
+
+        return {
+            'success': self.processed_count,
+            'resized': self.resized_count,
+            'failed': len(self.failed_files),
+            'skipped': len(self.skipped_files),
+            'failed_files': self.failed_files,
+            'skipped_files': self.skipped_files
+        }

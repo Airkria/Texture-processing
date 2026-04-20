@@ -31,7 +31,7 @@ def main():
     window.setWindowTitle(f"TextureAlphaMerger {VERSION_STR}")
 
     def on_export(color_files, alpha_files, output_path, output_format, output_size):
-        """导出回调"""
+        """Alpha模式导出回调"""
         if not color_files:
             QMessageBox.warning(window, "提示", "请添加彩色图文件")
             return
@@ -56,11 +56,39 @@ def main():
 
         QMessageBox.information(window, "完成", msg)
 
+    def on_rgb_export(color_files, r_files, g_files, b_files, output_path, output_format, output_size, output_suffix):
+        """RGB模式导出回调"""
+        if not color_files:
+            QMessageBox.warning(window, "提示", "请添加彩色图文件")
+            return
+
+        # 调用处理器进行RGB合并
+        result = processor.merge_rgb_files(
+            color_files=color_files,
+            r_files=r_files,
+            g_files=g_files,
+            b_files=b_files,
+            output_dir=output_path if output_path else None,
+            output_format=output_format,
+            output_size=output_size,
+            output_suffix=output_suffix
+        )
+
+        # 显示结果
+        msg = f"处理完成！\nRGB合成: {result['success']} 个文件"
+        if result['skipped'] > 0:
+            msg += f"\n跳过: {result['skipped']} 个文件"
+        if result['failed'] > 0:
+            msg += f"\n失败: {result['failed']} 个文件"
+
+        QMessageBox.information(window, "完成", msg)
+
     def check_update():
         """延迟检查更新（窗口显示后）"""
         check_for_update(window, silent=True)
 
     window.export_requested.connect(on_export)
+    window.rgb_export_requested.connect(on_rgb_export)
     window.show()
 
     # 延迟1秒后检查更新（不阻塞启动）

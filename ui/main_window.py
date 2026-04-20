@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
     QFileDialog, QMessageBox, QFrame, QSizePolicy
 )
 from PySide6.QtCore import Qt, Signal, QRect, QPoint
-from PySide6.QtGui import QDragEnterEvent, QDropEvent, QColor, QFont, QPainter, QPolygon
+from PySide6.QtGui import QDragEnterEvent, QDropEvent, QColor, QFont, QPainter, QPolygon, QPalette
 
 # 支持的图片格式
 SUPPORTED_FORMATS = {'.png', '.tga', '.bmp', '.jpg', '.jpeg'}
@@ -22,12 +22,17 @@ COLOR_SUFFIXES = ['_D', '_Color', '_Albedo', '_BaseColor', '_Diffuse', '_Base', 
 ALPHA_SUFFIXES = ['_A', '_Opacity']
 
 
+def _get_case_variants(suffix):
+    """获取后缀的大小写变体（原样 + 全小写）"""
+    return [suffix, suffix.lower()]
+
+
 def find_alpha_for_color(color_name_no_ext, dir_path):
     """
     智能匹配彩色图对应的Alpha图路径
 
     匹配策略：
-    1. 追加方式：color_name + '_A' / '_Opacity'
+    1. 追加方式：color_name + '_A' / '_a' / '_Opacity' / '_opacity'
     2. 后缀替换：color_name 中的颜色后缀替换为 Alpha 后缀
        例如：T_Grass_2K_D -> T_Grass_2K_A
 
@@ -39,20 +44,23 @@ def find_alpha_for_color(color_name_no_ext, dir_path):
         匹配到的Alpha图完整路径，未找到返回None
     """
     for ext in SUPPORTED_FORMATS:
-        # 策略1：追加方式
+        # 策略1：追加方式（支持大小写）
         for alpha_suffix in ALPHA_SUFFIXES:
-            alpha_path = os.path.join(dir_path, color_name_no_ext + alpha_suffix + ext)
-            if os.path.exists(alpha_path):
-                return alpha_path
+            for variant in _get_case_variants(alpha_suffix):
+                alpha_path = os.path.join(dir_path, color_name_no_ext + variant + ext)
+                if os.path.exists(alpha_path):
+                    return alpha_path
 
-        # 策略2：后缀替换方式
+        # 策略2：后缀替换方式（支持大小写）
         for color_suffix in COLOR_SUFFIXES:
-            if color_name_no_ext.endswith(color_suffix):
-                base_name = color_name_no_ext[:-len(color_suffix)]
-                for alpha_suffix in ALPHA_SUFFIXES:
-                    alpha_path = os.path.join(dir_path, base_name + alpha_suffix + ext)
-                    if os.path.exists(alpha_path):
-                        return alpha_path
+            for color_variant in _get_case_variants(color_suffix):
+                if color_name_no_ext.endswith(color_variant):
+                    base_name = color_name_no_ext[:-len(color_variant)]
+                    for alpha_suffix in ALPHA_SUFFIXES:
+                        for alpha_variant in _get_case_variants(alpha_suffix):
+                            alpha_path = os.path.join(dir_path, base_name + alpha_variant + ext)
+                            if os.path.exists(alpha_path):
+                                return alpha_path
 
     return None
 
@@ -62,7 +70,7 @@ def is_alpha_match_color(alpha_name_no_ext, color_name_no_ext):
     判断Alpha图是否与彩色图匹配（用于删除时联动）
 
     匹配规则（与find_alpha_for_color一致）：
-    1. 追加方式：color_name + '_A' / '_Opacity' == alpha_name
+    1. 追加方式：color_name + '_A' / '_a' / '_Opacity' / '_opacity' == alpha_name
     2. 后缀替换：color_name 的颜色后缀替换为 Alpha 后缀后 == alpha_name
 
     Args:
@@ -72,18 +80,21 @@ def is_alpha_match_color(alpha_name_no_ext, color_name_no_ext):
     Returns:
         True如果匹配，否则False
     """
-    # 策略1：追加方式
+    # 策略1：追加方式（支持大小写）
     for alpha_suffix in ALPHA_SUFFIXES:
-        if alpha_name_no_ext == color_name_no_ext + alpha_suffix:
-            return True
+        for variant in _get_case_variants(alpha_suffix):
+            if alpha_name_no_ext == color_name_no_ext + variant:
+                return True
 
-    # 策略2：后缀替换方式
+    # 策略2：后缀替换方式（支持大小写）
     for color_suffix in COLOR_SUFFIXES:
-        if color_name_no_ext.endswith(color_suffix):
-            base_name = color_name_no_ext[:-len(color_suffix)]
-            for alpha_suffix in ALPHA_SUFFIXES:
-                if alpha_name_no_ext == base_name + alpha_suffix:
-                    return True
+        for color_variant in _get_case_variants(color_suffix):
+            if color_name_no_ext.endswith(color_variant):
+                base_name = color_name_no_ext[:-len(color_variant)]
+                for alpha_suffix in ALPHA_SUFFIXES:
+                    for alpha_variant in _get_case_variants(alpha_suffix):
+                        if alpha_name_no_ext == base_name + alpha_variant:
+                            return True
 
     return False
 
@@ -97,8 +108,83 @@ COLOR_MAIN_BG = "#f8f9fa"
 # ============================================================================
 # 【窗口尺寸参数】
 # ============================================================================
-WINDOW_WIDTH = 510                          # 【修改1】窗口宽度 (原480，增加30px)
+WINDOW_WIDTH_ALPHA = 510                    # Alpha模式窗口宽度
+WINDOW_WIDTH_RGB = 920                      # RGB模式窗口宽度 (可在此调整，当前计算：四个等宽框 + 间距 + 两边留白)
 WINDOW_HEIGHT = 610                         # 窗口高度
+
+# ============================================================================
+# 【RGB模式留白参数 - 可在此调整】
+# ============================================================================
+RGB_MARGIN_LEFT = 20                        # RGB模式左边留白 (px)
+RGB_MARGIN_RIGHT = 20                       # RGB模式右边留白 (px)
+
+# ============================================================================
+# 【RGB合成 - 通道类型选项】
+# ============================================================================
+CHANNEL_TYPES = ["Roughness", "AO", "Height", "Metallic", "Curvature", "Thickness"]
+
+# RGB通道类型对应的后缀映射
+CHANNEL_SUFFIXES = {
+    "Roughness": ["_R", "_Roughness"],
+    "AO": ["_AO", "_AmbientOcclusion", "_Occlusion"],
+    "Height": ["_H", "_Height", "_Displacement", "_Disp"],
+    "Metallic": ["_M", "_Metallic", "_Metalness"],
+    "Curvature": ["_Curvature", "_Curve", "_Curv"],
+    "Thickness": ["_Thickness", "_Thick"]
+}
+
+# RGB通道类型对应的简写（用于输出文件命名）
+CHANNEL_ABBREVIATIONS = {
+    "Roughness": "R",
+    "AO": "A",
+    "Height": "H",
+    "Metallic": "M",
+    "Curvature": "C",
+    "Thickness": "T"
+}
+
+
+def find_channel_for_color(color_name_no_ext, dir_path, channel_type):
+    """
+    智能匹配彩色图对应的RGB通道贴图路径
+
+    匹配策略：
+    1. 追加方式：color_name + '_R' / '_r' / '_Roughness' / '_roughness' 等
+    2. 后缀替换：color_name 中的颜色后缀替换为通道后缀
+       例如：T_Grass_2K_D -> T_Grass_2K_R
+
+    Args:
+        color_name_no_ext: 彩色图文件名（不含扩展名）
+        dir_path: 文件所在目录
+        channel_type: 通道类型 ("Roughness", "AO", "Height" 等)
+
+    Returns:
+        匹配到的通道贴图完整路径，未找到返回None
+    """
+    suffixes = CHANNEL_SUFFIXES.get(channel_type, [])
+    if not suffixes:
+        return None
+
+    for ext in SUPPORTED_FORMATS:
+        # 策略1：追加方式（支持大小写）
+        for suffix in suffixes:
+            for variant in _get_case_variants(suffix):
+                channel_path = os.path.join(dir_path, color_name_no_ext + variant + ext)
+                if os.path.exists(channel_path):
+                    return channel_path
+
+        # 策略2：后缀替换方式（支持大小写）
+        for color_suffix in COLOR_SUFFIXES:
+            for color_variant in _get_case_variants(color_suffix):
+                if color_name_no_ext.endswith(color_variant):
+                    base_name = color_name_no_ext[:-len(color_variant)]
+                    for suffix in suffixes:
+                        for variant in _get_case_variants(suffix):
+                            channel_path = os.path.join(dir_path, base_name + variant + ext)
+                            if os.path.exists(channel_path):
+                                return channel_path
+
+    return None
 
 # ============================================================================
 # 【修改1】外部框架描边 - 彩色图框和Alpha图框的外边框
@@ -618,26 +704,116 @@ class AlphaDisplayFrame(QFrame):
         return self.files.copy()
 
 
+class ChannelDisplayFrame(QFrame):
+    """通用通道显示框架 - 支持自定义标题（用于R/G/B通道）"""
+
+    files_changed = Signal(list)
+
+    def __init__(self, title_text="通道", parent=None):
+        super().__init__(parent)
+        self.files = []
+        self.title_text = title_text
+        self.setStyleSheet(FILE_FRAME_STYLE)
+        self.setup_ui()
+        self._show_placeholder()
+
+    def setup_ui(self):
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(8)
+
+        # 标题
+        title = QLabel(self.title_text)
+        title.setObjectName("frameTitle")
+        title.setAlignment(Qt.AlignCenter)
+        title.setStyleSheet("QLabel { border: none; background: transparent; }")
+        layout.addWidget(title)
+
+        # 文件列表（只读）
+        self.file_list = QListWidget()
+        self.file_list.setSelectionMode(QListWidget.NoSelection)
+        layout.addWidget(self.file_list, 1)
+
+        # 占位提示
+        self.placeholder_text = f"匹配的{self.title_text}贴图将自动显示在这里"
+
+    def _show_placeholder(self):
+        if not self.files:
+            self.file_list.clear()
+            item = QListWidgetItem(self.placeholder_text)
+            item.setForeground(QColor(STYLE_PLACEHOLDER_COLOR_ALPHA))
+            item.setFlags(item.flags() & ~Qt.ItemIsSelectable)
+            self.file_list.addItem(item)
+
+    def _hide_placeholder(self):
+        if self.file_list.count() == 1:
+            item = self.file_list.item(0)
+            if item and item.text() == self.placeholder_text:
+                self.file_list.clear()
+
+    def set_files(self, files):
+        self.files = files.copy()
+        if self.files:
+            self._hide_placeholder()
+        self.update_list()
+        if not self.files:
+            self._show_placeholder()
+        self.files_changed.emit(self.files)
+
+    def clear_all(self):
+        self.files.clear()
+        self._show_placeholder()
+        self.files_changed.emit([])
+
+    def update_list(self):
+        self.file_list.clear()
+        for f in self.files:
+            item = QListWidgetItem(os.path.basename(f))
+            item.setForeground(QColor("#27ae60"))
+            self.file_list.addItem(item)
+
+    def get_files(self):
+        return self.files
+
+
 class TextureAlphaMergerApp(QMainWindow):
-    """主应用程序窗口"""
+    """主应用程序窗口 - 支持多模式切换"""
 
     export_requested = Signal(list, list, str, str, int)
+    rgb_export_requested = Signal(list, list, list, list, str, str, int, str)  # color_files, r_files, g_files, b_files, output_path, format, size, suffix
+
+    # 模式常量
+    MODE_ALPHA = "alpha"  # Alpha通道合并
+    MODE_RGB = "rgb"      # RGB合成
 
     def __init__(self):
         super().__init__()
         self.setWindowTitle("TextureAlphaMerger")
-        self.setFixedSize(WINDOW_WIDTH, WINDOW_HEIGHT)  # 【修改1】使用变量
         self.setStyleSheet(LIGHT_STYLE)
 
+        # 当前模式
+        self.current_mode = self.MODE_ALPHA
+
+        # 数据存储
         self.color_files = []
         self.alpha_files = []
-        self.alpha_files_mapped = []  # 【关键修复】完整映射列表（包含None）
+        self.alpha_files_mapped = []
         self.output_path = ""
 
+        # RGB模式数据
+        self.r_files_mapped = []
+        self.g_files_mapped = []
+        self.b_files_mapped = []
+
+        # 初始化界面
         self.setup_ui()
 
-    def setup_ui(self):
-        # 主窗口居中
+        # 设置初始窗口大小
+        self.setFixedSize(WINDOW_WIDTH_ALPHA, WINDOW_HEIGHT)
+        self._center_window()
+
+    def _center_window(self):
+        """窗口居中"""
         from PySide6.QtGui import QScreen
         screen = QScreen.availableGeometry(self.screen())
         self.move(
@@ -645,31 +821,103 @@ class TextureAlphaMergerApp(QMainWindow):
             (screen.height() - self.height()) // 2
         )
 
+    def setup_ui(self):
+        """创建主界面结构"""
         # 中央控件
-        central = QWidget()
-        self.setCentralWidget(central)
-        main_layout = QVBoxLayout(central)
-        main_layout.setContentsMargins(20, 15, 20, 15)
-        main_layout.setSpacing(8)
+        self.central_widget = QWidget()
+        self.setCentralWidget(self.central_widget)
+
+        # 主布局
+        self.main_layout = QVBoxLayout(self.central_widget)
+        self.main_layout.setContentsMargins(20, 15, 20, 15)
+        self.main_layout.setSpacing(8)
+
+        # ===== 顶部：功能选择下拉框 =====
+        self._create_mode_selector()
+
+        # ===== 内容区域容器 =====
+        self.content_widget = QWidget()
+        self.content_layout = QVBoxLayout(self.content_widget)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
+        self.content_layout.setSpacing(8)
+        self.main_layout.addWidget(self.content_widget)
+
+        # 创建Alpha模式界面
+        self.alpha_mode_widget = QWidget()
+        self._setup_alpha_mode_ui()
+
+        # 创建RGB模式界面
+        self.rgb_mode_widget = QWidget()
+        self._setup_rgb_mode_ui()
+
+        # 两个模式都添加到布局中，通过show/hide切换
+        self.content_layout.addWidget(self.alpha_mode_widget)
+        self.content_layout.addWidget(self.rgb_mode_widget)
+
+        # 默认显示Alpha模式
+        self.rgb_mode_widget.hide()
+
+    def _create_mode_selector(self):
+        """创建功能选择下拉框"""
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(5)
+
+        mode_label = QLabel("功能选择:")
+        mode_layout.addWidget(mode_label)
+
+        self.mode_combo = ArrowComboBox()
+        self.mode_combo.addItems(["Alpha通道合并", "RGB合成"])
+        self.mode_combo.setFixedWidth(130)
+        self.mode_combo.currentIndexChanged.connect(self._on_mode_changed)
+        mode_layout.addWidget(self.mode_combo)
+
+        mode_layout.addStretch()
+        self.main_layout.addLayout(mode_layout)
+
+    def _on_mode_changed(self, index):
+        """模式切换处理"""
+        if index == 0:
+            # Alpha通道合并模式
+            self.current_mode = self.MODE_ALPHA
+            self.alpha_mode_widget.show()
+            self.rgb_mode_widget.hide()
+            self.setFixedSize(WINDOW_WIDTH_ALPHA, WINDOW_HEIGHT)
+        else:
+            # RGB合成模式
+            self.current_mode = self.MODE_RGB
+            self.alpha_mode_widget.hide()
+            self.rgb_mode_widget.show()
+            self.setFixedSize(WINDOW_WIDTH_RGB, WINDOW_HEIGHT)
+
+        self._center_window()
+
+    # ========================================================================
+    # Alpha通道合并模式界面
+    # ========================================================================
+    def _setup_alpha_mode_ui(self):
+        """设置Alpha模式的界面"""
+        layout = QVBoxLayout(self.alpha_mode_widget)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
 
         # 标题
         title = QLabel("TextureAlphaMerger")
         title.setObjectName("titleLabel")
         title.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(title)
+        layout.addWidget(title)
 
         # 说明文字
         desc1 = QLabel("将选定图片的Alpha图合并到图片的A通道中")
         desc1.setObjectName("descLabel")
         desc1.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(desc1)
+        layout.addWidget(desc1)
 
         desc2 = QLabel("自动匹配：xx_A/xx_Opacity 或 xx_D->xx_A 后缀替换")
         desc2.setObjectName("descLabel")
         desc2.setAlignment(Qt.AlignCenter)
-        main_layout.addWidget(desc2)
+        layout.addWidget(desc2)
 
-        main_layout.addSpacing(5)
+        layout.addSpacing(5)
 
         # 彩色图和Alpha图并排区域
         files_layout = QHBoxLayout()
@@ -684,41 +932,164 @@ class TextureAlphaMergerApp(QMainWindow):
 
         files_layout.addWidget(self.color_frame, 1)
         files_layout.addWidget(self.alpha_frame, 1)
-        main_layout.addLayout(files_layout, 1)
+        layout.addLayout(files_layout, 1)
 
+        # 保存设置区域
+        self._create_save_settings(layout, "alpha")
+
+        # 导出按钮
+        layout.addSpacing(10)
+        self._create_export_button(layout, "alpha")
+
+    # ========================================================================
+    # RGB合成模式界面
+    # ========================================================================
+    def _setup_rgb_mode_ui(self):
+        """设置RGB合成模式的界面"""
+        # 使用QPalette设置背景色，避免覆盖子控件样式
+        palette = self.rgb_mode_widget.palette()
+        palette.setColor(QPalette.Window, QColor(COLOR_MAIN_BG))
+        self.rgb_mode_widget.setAutoFillBackground(True)
+        self.rgb_mode_widget.setPalette(palette)
+
+        layout = QVBoxLayout(self.rgb_mode_widget)
+        layout.setContentsMargins(RGB_MARGIN_LEFT, 0, RGB_MARGIN_RIGHT, 0)
+        layout.setSpacing(8)
+
+        # 标题
+        title = QLabel("RGB合成")
+        title.setObjectName("titleLabel")
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # 说明文字
+        desc = QLabel("将R、G、B三个通道贴图合成为一张图片")
+        desc.setObjectName("descLabel")
+        desc.setAlignment(Qt.AlignCenter)
+        layout.addWidget(desc)
+
+        layout.addSpacing(5)
+
+        # ===== 四个框并排区域（等宽） =====
+        files_layout = QHBoxLayout()
+        files_layout.setSpacing(8)
+
+        # 彩色图框
+        self.rgb_color_frame = ColorFileFrame()
+        self.rgb_color_frame.files_changed.connect(self.on_rgb_color_files_changed)
+
+        # R通道框
+        self.r_frame = ChannelDisplayFrame("R通道")
+
+        # G通道框
+        self.g_frame = ChannelDisplayFrame("G通道")
+
+        # B通道框
+        self.b_frame = ChannelDisplayFrame("B通道")
+
+        # 添加到布局，四个框等宽（比例 1:1:1:1）
+        files_layout.addWidget(self.rgb_color_frame, 1)
+        files_layout.addWidget(self.r_frame, 1)
+        files_layout.addWidget(self.g_frame, 1)
+        files_layout.addWidget(self.b_frame, 1)
+        layout.addLayout(files_layout, 1)
+
+        layout.addSpacing(5)
+
+        # ===== 通道类型选择行（放在框框下方） =====
+        channel_types_layout = QHBoxLayout()
+        channel_types_layout.setSpacing(15)
+
+        # R通道类型
+        channel_types_layout.addWidget(QLabel("R通道贴图:"))
+        self.r_type_combo = ArrowComboBox()
+        self.r_type_combo.addItems(CHANNEL_TYPES)
+        self.r_type_combo.setCurrentText("Roughness")
+        channel_types_layout.addWidget(self.r_type_combo)
+
+        # G通道类型
+        channel_types_layout.addWidget(QLabel("G通道贴图:"))
+        self.g_type_combo = ArrowComboBox()
+        self.g_type_combo.addItems(CHANNEL_TYPES)
+        self.g_type_combo.setCurrentText("AO")
+        channel_types_layout.addWidget(self.g_type_combo)
+
+        # B通道类型
+        channel_types_layout.addWidget(QLabel("B通道贴图:"))
+        self.b_type_combo = ArrowComboBox()
+        self.b_type_combo.addItems(CHANNEL_TYPES)
+        self.b_type_combo.setCurrentText("Height")
+        channel_types_layout.addWidget(self.b_type_combo)
+
+        channel_types_layout.addStretch()
+        layout.addLayout(channel_types_layout)
+
+        # 保存设置区域
+        self._create_save_settings(layout, "rgb")
+
+        # 导出按钮
+        layout.addSpacing(10)
+        self._create_export_button(layout, "rgb")
+
+    def _create_save_settings(self, parent_layout, mode):
+        """创建保存设置区域（格式、尺寸、目录）"""
         # 保存格式行
         format_layout = QHBoxLayout()
         format_layout.addWidget(QLabel("保存格式:"))
-        self.format_combo = ArrowComboBox()  # 【修改3】使用自定义带箭头的ComboBox
-        self.format_combo.addItems(["PNG", "TGA", "BMP", "JPG"])  # 【逻辑1】添加JPG格式
-        format_layout.addWidget(self.format_combo)
+
+        if mode == "alpha":
+            combo_name = "format_combo"
+        else:
+            combo_name = "rgb_format_combo"
+
+        format_combo = ArrowComboBox()
+        format_combo.addItems(["PNG", "TGA", "BMP", "JPG"])
+        format_layout.addWidget(format_combo)
         format_layout.addStretch()
-        main_layout.addLayout(format_layout)
+
+        if mode == "alpha":
+            self.format_combo = format_combo
+        else:
+            self.rgb_format_combo = format_combo
+
+        parent_layout.addLayout(format_layout)
 
         # 保存尺寸行
         size_layout = QHBoxLayout()
         size_layout.addWidget(QLabel("保存尺寸:"))
-        self.size_combo = ArrowComboBox()  # 【修改3】使用自定义带箭头的ComboBox
-        self.size_combo.addItems(["256", "512", "1024", "2048", "4096"])
-        self.size_combo.setCurrentText("2048")
-        size_layout.addWidget(self.size_combo)
+
+        if mode == "alpha":
+            combo_name = "size_combo"
+        else:
+            combo_name = "rgb_size_combo"
+
+        size_combo = ArrowComboBox()
+        size_combo.addItems(["256", "512", "1024", "2048", "4096"])
+        size_combo.setCurrentText("2048")
+        size_layout.addWidget(size_combo)
         size_layout.addStretch()
-        main_layout.addLayout(size_layout)
+
+        if mode == "alpha":
+            self.size_combo = size_combo
+        else:
+            self.rgb_size_combo = size_combo
+
+        parent_layout.addLayout(size_layout)
 
         # 保存目录行
         output_layout = QHBoxLayout()
         output_layout.addWidget(QLabel("保存目录:"))
-        self.output_entry = QLineEdit("源路径文件夹")
-        self.output_entry.setReadOnly(True)
-        self.output_entry.setFixedWidth(180)
-        output_layout.addWidget(self.output_entry)
+
+        output_entry = QLineEdit("源路径文件夹")
+        output_entry.setReadOnly(True)
+        output_entry.setFixedWidth(180)
+        output_layout.addWidget(output_entry)
 
         browse_btn = QPushButton("···")
         browse_btn.setFixedSize(35, 28)
         browse_btn.clicked.connect(self.select_output_folder)
         output_layout.addWidget(browse_btn)
 
-        # 【修改4】重置按钮 - 使用圆圈箭头图标
         reset_btn = QPushButton("↺")
         reset_btn.setObjectName("clearBtn")
         reset_btn.setFixedWidth(RESET_BUTTON_WIDTH)
@@ -727,22 +1098,36 @@ class TextureAlphaMergerApp(QMainWindow):
         output_layout.addWidget(reset_btn)
 
         output_layout.addStretch()
-        main_layout.addLayout(output_layout)
+        parent_layout.addLayout(output_layout)
 
-        # 导出按钮
-        main_layout.addSpacing(10)
+        if mode == "alpha":
+            self.output_entry = output_entry
+        else:
+            self.rgb_output_entry = output_entry
+
+    def _create_export_button(self, parent_layout, mode):
+        """创建导出按钮"""
         export_layout = QHBoxLayout()
         export_layout.addStretch()
 
-        self.export_btn = QPushButton("导出合成")
-        self.export_btn.setObjectName("exportBtn")
-        self.export_btn.setFixedSize(120, 38)
-        self.export_btn.setEnabled(False)
-        self.export_btn.clicked.connect(self.on_export)
-        export_layout.addWidget(self.export_btn)
+        export_btn = QPushButton("导出合成")
+        export_btn.setObjectName("exportBtn")
+        export_btn.setFixedSize(120, 38)
+        export_btn.setEnabled(False)
 
-        main_layout.addLayout(export_layout)
+        if mode == "alpha":
+            export_btn.clicked.connect(self.on_export)
+            self.export_btn = export_btn
+        else:
+            export_btn.clicked.connect(self.on_rgb_export)
+            self.rgb_export_btn = export_btn
 
+        export_layout.addWidget(export_btn)
+        parent_layout.addLayout(export_layout)
+
+    # ========================================================================
+    # Alpha模式事件处理
+    # ========================================================================
     def on_color_files_changed(self, files):
         self.color_files = files
         self.auto_detect_alpha()
@@ -765,7 +1150,7 @@ class TextureAlphaMergerApp(QMainWindow):
                 alpha_files_full.append(alpha_path)
                 alpha_files_display.append(alpha_path)
             else:
-                alpha_files_full.append(None)  # 【关键修复】用None占位，保持一一对应
+                alpha_files_full.append(None)  # 用None占位，保持一一对应
 
         # 保存完整映射用于导出
         self.alpha_files_mapped = alpha_files_full
@@ -776,22 +1161,12 @@ class TextureAlphaMergerApp(QMainWindow):
         self.alpha_files = files
         self.update_export_btn()
 
-    def select_output_folder(self):
-        folder = QFileDialog.getExistingDirectory(None, "选择保存目录")
-        if folder:
-            self.output_path = folder
-            self.output_entry.setText(folder)
-
-    def reset_output_folder(self):
-        self.output_path = ""
-        self.output_entry.setText("源路径文件夹")
-
     def update_export_btn(self):
-        # 【逻辑修改】只要有彩色图就可以导出（无Alpha图时会进行缩放处理）
+        # 只要有彩色图就可以导出
         self.export_btn.setEnabled(bool(self.color_files))
 
     def on_export(self):
-        # 【关键修复】使用完整的映射列表（包含None占位符，与color_files一一对应）
+        # 使用完整的映射列表（包含None占位符，与color_files一一对应）
         self.export_requested.emit(
             self.color_files,
             self.alpha_files_mapped,
@@ -799,3 +1174,106 @@ class TextureAlphaMergerApp(QMainWindow):
             self.format_combo.currentText(),
             int(self.size_combo.currentText())
         )
+
+    # ========================================================================
+    # RGB模式事件处理
+    # ========================================================================
+    def on_rgb_color_files_changed(self, files):
+        """RGB模式：彩色图列表变化时自动检测R/G/B通道贴图"""
+        self.color_files = files
+        self.auto_detect_rgb_channels()
+        self.update_rgb_export_btn()
+
+    def auto_detect_rgb_channels(self):
+        """自动检测R、G、B通道贴图"""
+        r_files_full = []
+        g_files_full = []
+        b_files_full = []
+        r_files_display = []
+        g_files_display = []
+        b_files_display = []
+
+        # 获取当前选择的通道类型
+        r_type = self.r_type_combo.currentText()
+        g_type = self.g_type_combo.currentText()
+        b_type = self.b_type_combo.currentText()
+
+        for color_file in self.color_files:
+            dir_path = os.path.dirname(color_file)
+            name_no_ext = os.path.splitext(os.path.basename(color_file))[0]
+
+            # 检测R通道
+            r_path = find_channel_for_color(name_no_ext, dir_path, r_type)
+            if r_path:
+                r_files_full.append(r_path)
+                r_files_display.append(r_path)
+            else:
+                r_files_full.append(None)
+
+            # 检测G通道
+            g_path = find_channel_for_color(name_no_ext, dir_path, g_type)
+            if g_path:
+                g_files_full.append(g_path)
+                g_files_display.append(g_path)
+            else:
+                g_files_full.append(None)
+
+            # 检测B通道
+            b_path = find_channel_for_color(name_no_ext, dir_path, b_type)
+            if b_path:
+                b_files_full.append(b_path)
+                b_files_display.append(b_path)
+            else:
+                b_files_full.append(None)
+
+        # 保存完整映射用于导出
+        self.r_files_mapped = r_files_full
+        self.g_files_mapped = g_files_full
+        self.b_files_mapped = b_files_full
+
+        # 显示找到的文件
+        self.r_frame.set_files(r_files_display)
+        self.g_frame.set_files(g_files_display)
+        self.b_frame.set_files(b_files_display)
+
+    def on_rgb_export(self):
+        """RGB模式：导出按钮点击处理"""
+        # 获取当前选择的通道类型简写
+        r_abbr = CHANNEL_ABBREVIATIONS[self.r_type_combo.currentText()]
+        g_abbr = CHANNEL_ABBREVIATIONS[self.g_type_combo.currentText()]
+        b_abbr = CHANNEL_ABBREVIATIONS[self.b_type_combo.currentText()]
+        output_suffix = f"_{r_abbr}{g_abbr}{b_abbr}"
+
+        # 发射RGB导出信号
+        self.rgb_export_requested.emit(
+            self.color_files,
+            self.r_files_mapped,
+            self.g_files_mapped,
+            self.b_files_mapped,
+            self.output_path,
+            self.rgb_format_combo.currentText(),
+            int(self.rgb_size_combo.currentText()),
+            output_suffix
+        )
+
+    def update_rgb_export_btn(self):
+        """更新RGB模式的导出按钮状态"""
+        # 只要有彩色图就可以导出
+        self.rgb_export_btn.setEnabled(bool(self.color_files))
+
+    # ========================================================================
+    # 公共方法
+    # ========================================================================
+    def select_output_folder(self):
+        folder = QFileDialog.getExistingDirectory(None, "选择保存目录")
+        if folder:
+            self.output_path = folder
+            # 更新两个模式的显示
+            self.output_entry.setText(folder)
+            self.rgb_output_entry.setText(folder)
+
+    def reset_output_folder(self):
+        self.output_path = ""
+        # 更新两个模式的显示
+        self.output_entry.setText("源路径文件夹")
+        self.rgb_output_entry.setText("源路径文件夹")
